@@ -1,1 +1,252 @@
+# Load packages 
+library(dada2)
+library(phyloseq)
+library(tidyverse)
+library(ggplot2)
+library(vegan)
+library(rstatix)
+
+# Create file path to sequences
+path <- "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled" # Creates path object
+list.files(path, pattern = "fastq") # Lists fastq sequencing files at path location
+
+# First, we must load in our fastq sequencing files. In this case, all of the fastq files have the format, SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq, for forward and reverse sequences, respectively. We will save them into objects, grouping forward sequences and reverse sequences separately.
+fnFs <- sort(list.files(path, pattern = "_R1_001.fastq", full.names = TRUE)) # Forward sequences
+fnRs <- sort(list.files(path, pattern = "_R2_001.fastq", full.names = TRUE)) # Reverse sequences
+
+# Extract sample names, assuming filenames have format:
+get.sample.name <- function(fname) strsplit(basename(fname), "_")[[1]][1]
+sample.names <- unname(sapply(fnFs, get.sample.name))
+head(sample.names)
+
+# Check quality (repeat for all sequences)
+plotQualityProfile(fnFs[1:20]) # Forward sequences quality 
+plotQualityProfile(fnRs[1:20])  # Reverse sequences quality
+
+# Create a list of character vectors for each sample split at the underscore, then sapply uses the first element in each character vector as the sample name
+sample.names <- strsplit(basename(fnFs), "_") %>% 
+  sapply(`[`, 1) 
+sample.names
+
+# Set up a path to place the filtered files in a subdirectory. This will create a "filtered" folder. 
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+# Paste sample names and filtered specification together to make new file names, then store them in the new "filtered" folder at our path destination.
+names(filtFs) <- sample.names 
+names(filtRs) <- sample.names # Applies the sample names as derived in the previous step to the filtered files
+
+# Filter and trim
+out <- filterAndTrim(fwd = fnFs, filt = filtFs, rev = fnRs, filt.rev = filtRs, truncLen = c(240,180),
+                     maxN = 0, maxEE = c(2,2), truncQ = 2, rm.phix = TRUE,
+                     compress = TRUE, multithread = TRUE) # On Windows, set multithread = FALSE
+head(out)
+
+
+# Check quality
+plotQualityProfile(filtFs[1:20]) # Check quality of filtered datasets
+plotQualityProfile(filtRs[1:20])
+
+# Compare unfiltered and filtered files
+plotQualityProfile(c(fnFs[1],filtFs[1])) # Compares first forward sequence 
+
+# Examine the error rates
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread = TRUE)
+
+# Visualize error rates
+plotErrors(errF, nominalQ = TRUE)
+
+# Examine sample inference to determine the number of sequence variants from the total unique sequences in each samples.
+dadaFs <- dada(filtFs, err = errF, multithread = TRUE) # Creates dada object with sample inference for each sequence
+dadaRs <- dada(filtRs, err = errR, multithread = TRUE)
+# Inspect the returned dada class object for the first forward and reverse sequences
+dadaFs[[1]] 
+dadaRs[[1]]
+
+# Merge
+merged <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose = TRUE) # Creates list of data frames for each sample
+
+# Construct ASV table with the merged reads
+seqtab <- makeSequenceTable(merged) # Constructs sequence table (matrix)
+dim(seqtab) # Check dimensions
+table(nchar(getSequences(seqtab))) # Inspect distribution of sequence lengths - we expect these to below 250 as this was the intial read length.
+
+# Remove chimera sequences
+seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = TRUE, verbose = TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab) # Examine frequency of chimeric sequences 
+
+# Track reads
+getN <- function(N){
+  sum(getUniques(N))
+} 
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(merged, getN), rowSums(seqtab.nochim)) 
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim") # Naming columns of overview table
+rownames(track) <- sample.names # Naming rows of overview table
+track
+
+# Assign taxonomy
+taxa <- assignTaxonomy(seqtab.nochim, "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/sdm_database.fasta", multithread = TRUE) # Divides ASV's into chunks and looks for sequence matches to assign taxonomy
+taxa.print <- taxa 
+rownames(taxa.print) <- NULL # Removing sequence rownames for display only
+head(taxa.print) # Examine taxonomic assignments - we can see many taxa are not assigned to species as the gut microbiome of the mouse is not well-defined in the reference database.
+
+# Load sample data
+sam_data <- read.csv("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/HFHS_fungi_pooled_16S_metadata.csv", row.names = 1) 
+
+# Create phyloseq object
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows = FALSE),
+               tax_table(taxa)) # Creates phyloseq object
+sampledata = data.frame(sam_data, row.names=sample_names(ps))
+ps = merge_phyloseq(ps, sample_data(sampledata))
+ps
+
+# Prune phyloseq object to remove samples with less than 1000 reads, remove singletons, and filter for ASVs that appear at least 3x in the dataset in at least 20% of samples.
+ps2 <- prune_samples(sample_sums(ps) >= 1000, ps) 
+ps3 <- prune_taxa(taxa_sums(ps2) > 1, ps2)
+ps_clean <- filter_taxa(ps3, function(x) sum(x > 3) > (0.2 * length(x)), TRUE) 
+ps_clean
+
+# Glom at Species level and relativize
+ps_species <- ps_clean %>%
+  tax_glom(taxrank = "Species") %>%
+  transform_sample_counts(function(x) x*100 / sum(x)) %>%
+  psmelt()
+
+# Prepare the melted ps object for plotting
+ps_species <- ps_species %>%
+  mutate(sex = dplyr::recode(sex,
+                         "M" = "Male",
+                         "F" = "Female")) %>%
+  mutate(Species = dplyr::recode(Species,
+                          #"KB18" = "A. muris KB18",
+                          #"YL44" = "A. muciniphila YL44",
+                          #"I48" = "B. caecimuris I48",
+                          #"YL2" = "B. longum YL2",
+                          "Blauta_coccoides_YL58" = "Blautia_coccoides_YL58"))
+                          #"YL32" = "C. clostridioforme YL32",
+                          #"I46" = "C. innocuum I46",
+                          #"KB1" = "E. faecalis KB1",
+                          #"YL31" = "F. plautii YL31",
+                          #"I49" = "L. reuteri I49",
+                          #"YL27" = "M. intestinale YL27",
+                          #"YL45" = "T. muris YL45")) 
+ps_species$Species <- factor(ps_species$Species,levels = c("Acutalibacter_muris_KB18", "Akkermansia_muciniphila_YL44", "Bacteroides_caecimuris_I48", "Bifidobacterium_longum_animalis_YL2", "Blautia_coccoides_YL58",  "Clostridium_innocuum_I46", "Clostridium_clostridioforme_YL32","Enterococcus_faecalis_KB1", "Flavonifractor_plautii_YL31", "Lactobacillus_reuteri_I49", "Muribaculum_intestinale_YL27", "Turicimonas_muris_YL45", "Other"))
+ps_species$sex <- factor(ps_species$sex, levels = c("Male", "Female"))
+ps_species$colonization <- factor(ps_species$colonization, levels = c("B", "B+C", "B+R", "B+M"))
+ps_species$experiment <- as.character(ps_species$experiment)
+ps_species$experiment <- factor(ps_species$experiment, levels = c("1", "2"))
+ps_species$diet <- factor(ps_species$diet, levels = c("SD", "HFHS"))
+
+# Set seed
+set.seed(123456)
+
+# Alpha diversity
+richness <- estimate_richness(ps_clean, measures = c("Shannon", "Chao1", "Eveness"))
+colnames(richness)
+str(richness)
+richness2 <- cbind(richness, ps_clean@sam_data) 
+richness2$colonization <- factor(richness2$colonization, levels = c("B", "B+C", "B+R", "B+M"))
+richness2$diet <- factor(richness2$diet, levels = c("SD", "HFHS"))
+
+# Plot Shannon diversity at 3 weeks
+## Due to batch effects, only compare fungal groups to corresponding B group 
+richness2_filt <- richness2 %>%
+  filter(age == "3") %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(experiment == "1")
+
+richness2_filt %>%
+group_by(colonization) %>%
+  dplyr::summarise(
+    n = n())
+
+jpeg(file = "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/figures/Shannon_3w_BC.jpeg", width = 1100, height = 1000, units = "px", res = 300)  
+fig <- ggplot(richness2_filt, aes(x= colonization, y = Shannon, color = colonization, fill = colonization)) + 
+  theme_bw() +
+  geom_boxplot(color = "black", alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(aes(color = colonization), position = position_jitter(0.2),  size = 1.2) +
+  labs(x = "Colonization", y = "Shannon Diversity Index")+
+  ggtitle("3 weeks")+
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))+
+  scale_color_manual(name = "Colonization", values = c("#797979","#F16400"))+ #dot color
+  scale_fill_manual(values = c("#797979","#F16400")) #fill color
+fig
+dev.off()
+
+# Shannon diversity stats at 3 weeks
+## Summary stats
+richness2_filt %>%
+  group_by(colonization) %>%
+  get_summary_stats(Shannon, type = "mean_sd")
+
+## Identify outliers
+richness2_filt %>% 
+  group_by(experiment) %>%
+  identify_outliers(Shannon)
+
+## Test for normality
+richness2_filt %>%
+  group_by(experiment) %>%
+  shapiro_test(Shannon)
+
+## Check homogeneity of variance
+richness2_filt %>% levene_test(Shannon ~ colonization) #non sig
+
+## One-way anova
+t.test(Shannon~colonization, data=richness2_filt, var.equal = TRUE)
+
+# Plot Shannon diversity at 12 weeks
+richness2_filt <- richness2 %>%
+  filter(age == "12") %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(experiment == "1")
+
+richness2_filt %>%
+group_by(colonization, diet) %>%
+  dplyr::summarise(
+    n = n())
+
+richness2_filt$diet <- factor(richness2_filt$diet, levels = c("SD", "HFHS"))
+jpeg(file = "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/figures/Shannon_12w_BC.jpeg", width = 1600, height = 1050, units = "px", res = 300)  
+fig <- ggplot(richness2_filt, aes(x= colonization, y = Shannon, color = colonization, fill = colonization)) + 
+  theme_bw() +
+  facet_wrap(~diet)+
+  geom_boxplot(color = "black", alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(aes(color = colonization), position = position_jitter(0.2),  size = 1.2) +
+  labs(x = "Colonization", y = "Shannon Diversity Index")+
+  ggtitle("12 weeks")+
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))+
+  scale_color_manual(name = "Colonization", values = c("#797979","#F16400"))+ #dot color
+  scale_fill_manual(values = c("#797979","#F16400")) #fill color
+fig
+dev.off()
+
+# Shannon diversity stats at 12 weeks
+## Summary stats
+richness2_filt %>%
+  group_by(colonization, diet) %>%
+  get_summary_stats(Shannon, type = "mean_sd")
+
+## Identify outliers
+richness2_filt %>% 
+  group_by(colonization, diet) %>%
+  identify_outliers(Shannon)
+
+## Test for normality 
+richness2_filt %>%
+  group_by(colonization, diet) %>%
+  shapiro_test(Shannon)
+
+## Check homogeneity of variance
+richness2_filt %>% levene_test(Shannon ~ colonization)
+
+## Two-way anova
+res.aov2 <- aov(Shannon~colonization + diet, data = richness2_filt)
+summary(res.aov2) 
+
+# Beta Diversity
+
+
+
 
