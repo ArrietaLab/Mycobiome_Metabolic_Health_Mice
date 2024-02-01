@@ -1,0 +1,94 @@
+library(ggplot2)
+library(vegan)
+library(here)
+library(janitor)
+library(scales)
+library(ggrepel)
+
+set.seed(123456)
+
+# Plot PCA based on values calculated by Metaboanalyst
+BC_PCA$Diet <- factor(BC_PCA$Diet, levels = c("SD", "HFHS"))
+
+PCA <- qplot(PC1, PC2, xlab = "PCA1", ylab = "PCA2",
+              size = I(2), shape = Diet, fill = colonization, color = colonization, data = (BC_PCA))
+
+jpeg(file = "/Users/mackenziegutierrez/Desktop/PCA_BC_pooled.jpeg", width = 1400, height = 950, units = "px", res = 300) 
+fig <- PCA +
+  stat_ellipse(level = 0.95, geom = "polygon", alpha = 1/6, linetype = 2, size = 0.5, 
+               aes(fill = colonization, color = colonization)) +
+  #scale_shape_manual(name = "Colonization", values = c(21:24)) + #shape selection
+  theme_bw() + 
+  #ylim(-0.35, 0.25)+
+  #xlim(-1.5, 1.6)+
+  labs(title = "B+C", x = "PCA1 (36.7%)", y = "PCA2 (14.8%)")+
+  theme(legend.title = element_text(colour = "black", size = 9.5, face = "bold"),
+        legend.text = element_text(colour = "black", size = 9.5),
+        legend.position = "right",
+        axis.title = element_text(face = "bold", size = 12, color = "black"),
+        axis.text = element_text(size = 9.5),
+        strip.text.x = element_text(face = "bold"),
+        plot.title = element_text(colour = "black", size = 12, face = "bold", hjust=0.5)) +
+  scale_color_manual(name = "Colonization", values = c("#797979","#FFA500"))+ #outer shape color
+  scale_fill_manual(name = "Colonization", values = c("#797979","#FFA500"))  #inside shape color
+  #guides(size = FALSE) # To hide legend, add this inside parenthesis: color = FALSE, fill = FALSE, shape = FALSE
+fig
+dev.off()
+
+# Perform statistics
+BC_PCA_filt <- BC_PCA %>% # prepare data for vegdist - can only have numerical data
+  select(-c(Diet, Sex, colonization)) %>%
+  column_to_rownames(var = "Sample_ID")
+
+BC_PCA_mod <- BC_PCA%>% # convert Sample_ID to row names to match with above
+  column_to_rownames(var = "Sample_ID")
+
+BC_euclidean <- vegdist(BC_PCA_filt, method = "euclidean") # calculate Euclidean distance 
+permanova <- adonis2(BC_euclidean ~ colonization + Diet, data = BC_PCA_mod, permutations = 999)
+
+# Fold change analysis 
+# Create new categorical column
+BC_SD <- BC_SD %>%
+  mutate(change = case_when(FC >= 2 & p.ajusted <= 0.05 ~ "up",
+                               FC <= 0.5 & p.ajusted <= 0.05 ~ "down",
+                               TRUE ~ "ns"))          
+BC_SD %>%
+  count(change)
+
+cols <- c("up" = "#FF4D4D", "down" = "#5E60CE", "ns" = "grey") 
+sizes <- c("up" = 2, "down" = 2, "ns" = 1) 
+alphas <- c("up" = 1, "down" = 1, "ns" = 0.5)
+
+# Volcano plot
+jpeg(file = "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/B+C/BC_SD_volcano.jpeg", width = 1350, height = 900, units = "px", res = 300) 
+vol_plot <- BC_SD %>%
+  ggplot(aes(x = log2(FC),
+             y = -log10(p.ajusted), 
+             fill = change,    
+             size = change,
+             alpha = change)) + 
+  geom_point(shape = 21, # Specify shape and colour as fixed local parameters    
+             colour = "black")   +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed") + 
+  geom_vline(xintercept = c(log2(0.5), log2(2)),
+             linetype = "dashed") +
+  scale_x_continuous(breaks = c(seq(-6, 6, 2)), # Modify x-axis tick intervals    
+                     limits = c(-6, 6))  +
+  scale_fill_manual(values = cols) + # Modify point colour
+  scale_size_manual(values = sizes) + # Modify point size
+  scale_alpha_manual(values = alphas)  +
+  labs(title = "SD - B+C",
+      x = "log2(fold change)",
+       y = "-log10(p.adjust)",
+       colour = "Change") +  
+  theme_bw() +
+  theme(legend.title = element_text(colour = "black", size = 9.5, face = "bold"),
+        legend.text = element_text(colour = "black", size = 9.5),
+        legend.position = "right",
+        axis.title = element_text(face = "bold", size = 10.5, color = "black"),
+        axis.text = element_text(size = 9.5),
+        strip.text.x = element_text(face = "bold"),
+        plot.title = element_text(colour = "black", size = 12, face = "bold", hjust=0.5)) 
+vol_plot # Visualise simple volcano plot  
+dev.off()
