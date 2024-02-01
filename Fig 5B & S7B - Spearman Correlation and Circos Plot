@@ -1,0 +1,194 @@
+knitr::opts_chunk$set(echo = F,message=F,comment=F,warning=F)
+library(mixOmics)
+library(tidyverse)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(igraph)
+library(networkD3)
+library(pheatmap)
+library(RColorBrewer)
+library(writexl)
+source("helper_functions.R")
+library(DT)
+library(circlize)
+library(Hmisc)
+
+# normalize by median
+MedianNorm<-function(x){
+  x/median(x, na.rm=T);
+}
+
+LogNorm<-function(x, min.val){
+  log10((x + sqrt(x^2 + min.val^2))/2)
+}
+
+# square root, tolerant to negative values
+SquareRootNorm<-function(x, min.val){
+  ((x + sqrt(x^2 + min.val^2))/2)^(1/2);
+}
+
+# normalize to zero mean and unit variance
+AutoNorm<-function(x){
+  (x - mean(x))/sd(x, na.rm=T);
+}
+
+# normalize to zero mean but variance/SE
+ParetoNorm<-function(x){
+  (x - mean(x))/sqrt(sd(x, na.rm=T));
+}
+
+# normalize to zero mean but variance/SE
+MeanCenter<-function(x){
+  x - mean(x);
+}
+
+# normalize to zero mean but variance/SE
+RangeNorm<-function(x){
+  if(max(x) == min(x)){
+    x;
+  }else{
+    (x - mean(x))/(max(x)-min(x));
+  }
+}
+
+# Spearman correlation between all variables the correlation cutoff is set at abs(0.6).
+all_data<- data1  
+circos.par(start.degree = 172)
+cor_method<-"spearman"
+
+# For Metabolomics and immune data RangeNorm normalization is used. Different methods from #NOREVA paper (Nucleic Acids Research, Volume 45, Issue W1, 3 July 2017, Pages W162–W170, 
+# https://doi.org/10.1093/nar/gkx449) were tested.RangeNorm was the simplest that separated the groups in metabolomic data reasonably well
+# RangeNorm = Mean normalization
+metabolism<-apply(metabolism, 2, RangeNorm)
+wat<-apply(wat, 2, RangeNorm)
+
+# 16S and ITS is converted to ranks  as explained by 
+# https://bioconductor.org/help/course-materials/2017/BioC2017/Day1/Workshops/Microbiome/MicrobiomeWorkflowII.html
+abund_ranks <- t(apply(microbes, 1, rank))
+microbes<-apply(abund_ranks,2,RangeNorm)
+
+data_matrix<-as.matrix(cbind(metabolism,microbes,wat,colonization_table))
+
+# Perform Pearson correlation analysis
+result <- rcorr(data_matrix, type = cor_method)
+
+# Access the matrix of correlations
+corMat <- result$r
+
+# Access the matrix of p-values
+pvalues<-result$P
+pvalues <- t(apply(pvalues,1,function(x)p.adjust(x,method = 'BH'))) 
+
+# Filter for significant correlations
+corMat_sig<-corMat
+
+corMat_sig[pvalues >= 0.05] <- 0
+
+# Set to 0 the correlation among variables of the same group
+corMat_sig_inter<-corMat_sig
+corMat_sig_inter[1:8,1:8]<-0
+corMat_sig_inter[9:20,9:20]<-0
+corMat_sig_inter[21:46,21:46]<-0
+corMat_sig_inter[47:50,47:50]<-0
+
+# Only correlations between datasets:
+correlations <- corMat_sig_inter
+circos.par(start.degree = 0)
+
+# Correlation threshold 
+threshold = 0.6
+mask <- abs(correlations) >= threshold & upper.tri(correlations)
+
+matrix_for_circlize <- data.frame(
+    from = rownames(correlations)[row(correlations)[mask]],
+    to = colnames(correlations)[col(correlations)[mask]],
+    value = correlations[mask]
+)
+
+# Color links based on correlation sign
+matrix_for_circlize$link_color <- ifelse(matrix_for_circlize$value > 0, "#FF000066", "#18b1e0")
+
+var_to_color <- group_colors[groups[, 2]]
+names(var_to_color) <- groups[, 1]
+
+matrix_for_circlize$color <- var_to_color[matrix_for_circlize$from]
+
+sectors <- unique(c(matrix_for_circlize$from, matrix_for_circlize$to))
+sector_colors <- var_to_color[sectors]
+
+# Order the sectors by group
+
+## Different color vectors to be used in plots
+colors_blocks = c("#3CAEA3", "blueviolet", "gray60","#F6D55C")
+group_colors <- c("Metabolism" = "#3CAEA3", "Microbes" = "blueviolet", "WAT" = "gray60", "Colonization" = "#F6D55C")
+
+# Colors used to display positive and negative 
+color_cor <-c("#FF000066","#18b1e0")
+
+# ColorScale for Networkd3
+ColourScale <-'d3.scaleOrdinal()
+            .domain(["Metabolism", "Microbes","WAT","Colonization"])
+           .range(["gray60","#18b1e0","#3CAEA3","#F6D55C"]);'
+
+# Makes a dataframe with variable name and dataset name i.e group.
+# This is used by the forcenetwork plot
+
+groups <- rbind(
+  cbind(colnames(metabolism), rep(x = "Metabolism" , ncol(metabolism))),
+  cbind(colnames(microbes), rep(x = "Microbes" , ncol(microbes))),
+  cbind(colnames(wat), rep(x = "WAT" , ncol(wat))),
+  cbind(colnames(colonization_table), rep(x = "Colonization" , ncol(colonization_table)))
+  )
+colnames(groups)<-c("name","group")
+
+
+ordered_sectors <- groups[, 1][order(match(groups[, 2], names(group_colors)))]
+
+# Plot chord diagram with link colors based on correlation sign and ordered sectors
+chordDiagram(
+    x = matrix_for_circlize, 
+    annotationTrack = "grid", 
+    preAllocateTracks = 2,
+    grid.col = sector_colors,
+    col = matrix_for_circlize$link_color,
+    order = ordered_sectors  # Using ordered sectors
+)
+
+# Combine group colors and correlation colors for the legend
+all_legend_labels <- c(names(group_colors), "Positive Correlation", "Negative Correlation")
+all_legend_colors <- c(group_colors, "#FF000066", "#18b1e0")
+
+# Add legend for group colors and correlation colors
+legend(x = 0.6, y = 0.8, legend = all_legend_labels, 
+       fill = all_legend_colors, border = "white", 
+       cex = 1.5)
+
+# Rest of plotting code
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+    xlim = get.cell.meta.data("xlim")
+    ylim = get.cell.meta.data("ylim")
+    sector.name = get.cell.meta.data("sector.index")
+    
+    # Check if sector.name belongs to "Microbes" set
+    if (sector.name %in% colnames(microbes)) {
+        fontStyle = 3  # italic
+    } else {
+        fontStyle = 1  # plain text
+    }
+    
+    circos.text(mean(xlim), ylim[1]-1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5),cex = 1.5,font = fontStyle)
+    circos.axis(h = "top", labels = FALSE, labels.cex = 0.5, major.tick = FALSE, lwd=0, sector.index = sector.name, track.index = 2)
+}, bg.border = NA)
+
+# plot correlation matrix
+datatable(corMat, 
+          rownames= T,
+          filter = 'top',
+          caption = "Correlation Matrix",
+          extensions = 'Buttons',
+          options = list(scrollX = TRUE,
+                         pageLength = 4,
+                         dom = 'Blfrtip',
+                         buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+                         )) 
