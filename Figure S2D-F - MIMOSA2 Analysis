@@ -1,0 +1,59 @@
+library(mimosa)
+test_m2_analysis(test_vsearch = T)
+set.seed(9999)
+
+# Run MIMOSA2 for B+C mice 
+mimosa_results_make_plots = run_mimosa2("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/mimosa2/config_table_BC_SD.txt", make_plots = T, save_plots = T) # SD
+mimosa_results_make_plots = run_mimosa2("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/mimosa2/config_table_BC_HFHS.txt", make_plots = T, save_plots = T) # HFHS
+
+# Results without figures
+mimosa_result_BC_SD = run_mimosa2("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/mimosa2/config_table_BC_SD.txt")
+mimosa_result_BC_HFHS = run_mimosa2("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/mimosa2/config_table_BC_HFHS.txt")
+
+
+# Extract variance data from the results
+BC_SD <- mimosa_result_BC_SD[[1]]
+BC_HFHS <- mimosa_result_BC_HFHS[[1]]
+
+# Contribution to variance plot
+BC_SD_uracil <- BC_SD %>%
+  filter(MetaboliteName == "Uracil") %>%
+  filter(VarShare > 0)
+
+BC_SD_uracil <- BC_SD_uracil %>%
+  mutate(Species = dplyr::recode(Species,
+                          "Acutalibacter_muris_KB18" = "A. muris KB18",
+                          "Akkermansia_muciniphila_YL44" = "A. muciniphila YL44",
+                          "Bacteroides_caecimuris_I48" = "B. caecimuris I48",
+                          "Bifidobacterium_longum_animalis_YL2" = "B. animalis YL2",
+                          "Blautia_coccoides_YL58" = "B. pseudococcoides YL58",
+                          "Clostridium_clostridioforme_YL32" = "E. clostridioforme YL32",
+                          "Clostridium_innocuum_I46" = "C. innocuum I46",
+                          "Enterococcus_faecalis_KB1" = "E. faecalis KB1",
+                          "Flavonifractor_plautii_YL31" = "F. plautii YL31",
+                          "Lactobacillus_reuteri_I49" = "L. reuteri I49",
+                          "Muribaculum_intestinale_YL27" = "M. intestinale YL27",
+                          "Turicimonas_muris_YL45" = "T. muris YL45"))
+
+BC_SD_uracil$Species <- factor(BC_SD_uracil$Species,levels = c("T. muris YL45", "L. reuteri I49", "F. plautii YL31", "E. faecalis KB1", "C. innocuum I46", "B. pseudococcoides YL58", "A. muris KB18"))
+
+jpeg(file = "/Users/mackenziegutierrez/Desktop/BC_SD_uracil.jpeg", width = 875, height = 1000, units = "px", res = 300)  
+ggplot(BC_SD_uracil, aes(x=Species, y=VarShare, label=Species)) +
+  geom_bar(stat='identity', aes(fill=Species), width=.9, show.legend = FALSE) +
+  coord_flip() +
+  theme_bw() +
+  geom_hline(aes(yintercept = 0), linetype = 9) +
+  labs(title = "Uracil - SD", y = "Contribution to variance") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        legend.title = element_text(colour = "black", size = 9.5, face = "bold"),
+        legend.text = element_text(colour = "black", size = 9.5),
+        legend.position = "right",
+        axis.title = element_text(face = "bold", size = 14, color = "black"),
+        axis.text = element_text(size = 14),
+        strip.text.x = element_text(face = "bold"),
+        plot.title = element_text(colour = "black", size = 18, face = "bold", hjust=0.5)) +
+  scale_fill_manual(values=c("#aa4499","#882155","#cc6777","#ddcc77","#322288","#107733", "#88ccee"))+
+  scale_color_manual(values = c("#aa4499","#882155","#cc6777","#ddcc77","#322288","#107733", "#88ccee"))
+dev.off()
