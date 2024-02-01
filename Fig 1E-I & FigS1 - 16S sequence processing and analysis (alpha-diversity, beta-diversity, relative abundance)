@@ -8,6 +8,9 @@ library(rstatix)
 library(BiocGenerics)
 library(SummarizedExperiment)
 library(DESeq2)
+library(FSA) 
+library(car)
+library(ggpubr)
 
 # Create file path to sequences
 path <- "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled" # Creates path object
@@ -383,6 +386,122 @@ dev.off()
 permanova <- adonis(comm_vst_blind_mat ~ colonization + diet + sex, data = sdf, permutations = 999)
 permanova$aov.tab 
 
+# Relative abundance
+# Bar plot 
+ps_species_group <- ps_species %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(age == "3") %>%
+  filter(experiment == "1")
 
+ps_species_group %>%
+group_by(colonization, Species) %>%
+  dplyr::summarise(
+    n = n())
 
+ps_species_group <- ps_species_group %>%
+  mutate(Species = dplyr::recode(Species,
+                          "Acutalibacter_muris_KB18" = "A. muris KB18",
+                          "Akkermansia_muciniphila_YL44" = "A. muciniphila YL44",
+                          "Bacteroides_caecimuris_I48" = "B. caecimuris I48",
+                          "Bifidobacterium_longum_animalis_YL2" = "B. animalis YL2",
+                          "Blautia_coccoides_YL58" = "B. pseudococcoides YL58",
+                          "Clostridium_clostridioforme_YL32" = "E. clostridioforme YL32",
+                          "Clostridium_innocuum_I46" = "C. innocuum I46",
+                          "Enterococcus_faecalis_KB1" = "E. faecalis KB1",
+                          "Flavonifractor_plautii_YL31" = "F. plautii YL31",
+                          "Lactobacillus_reuteri_I49" = "L. reuteri I49",
+                          "Muribaculum_intestinale_YL27" = "M. intestinale YL27",
+                          "Turicimonas_muris_YL45" = "T. muris YL45"))
 
+jpeg(file = "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/figures/relative_abundance_3w_BC2.jpeg", width = 1200, height = 1150, units = "px", res = 300)   
+fig <- ggplot(ps_species_group, aes (x = colonization, y = Abundance, color = Species, fill = Species)) +
+  geom_bar(stat = "identity", position = "fill") + 
+  theme_bw() + 
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = "Colonization", y = "Relative abundance") +
+  ggtitle("3 weeks") +
+   theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12), 
+        legend.text = element_text(face = "italic")) +
+  scale_fill_manual(values=c("#fde725","#c2df23","#86d549","#52c569","#2ab07f","#1e9b8a","#25858e","#2d708e","#38588c","#433e85","mediumorchid4","#440154",        "grey"))+
+  scale_color_manual(values = c("#fde725","#c2df23","#86d549","#52c569","#2ab07f","#1e9b8a","#25858e","#2d708e","#38588c","#433e85","mediumorchid4","#440154",        "grey"))
+fig
+dev.off()
+
+# Heat maps
+## Determine limits
+ps_species_group <- ps_species %>%
+  filter(age == "3") %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(experiment == "1")
+
+mean_abun <- ps_species_group %>%
+  group_by(colonization, Species) %>% 
+  summarise(mean_abun=mean(Abundance)) # get mean abundance for each species 
+
+m <- mean_abun %>%
+  ungroup()%>%
+  summarize(min=min(mean_abun), max=max(mean_abun))
+
+## Plot heat map
+ps_species_group <- ps_species %>%
+  filter(age == "3") %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(experiment == "1")
+
+ps_species_group %>%
+group_by(colonization, Species) %>%
+  dplyr::summarise(
+    n = n())
+
+mean_abun <- ps_species_group %>%
+  group_by(colonization, Species) %>% 
+  summarise(mean_abun=mean(Abundance))
+
+mean_abun <- mean_abun %>%
+  mutate(Species = dplyr::recode(Species,
+                          "Acutalibacter_muris_KB18" = "A. muris KB18",
+                          "Akkermansia_muciniphila_YL44" = "A. muciniphila YL44",
+                          "Bacteroides_caecimuris_I48" = "B. caecimuris I48",
+                          "Bifidobacterium_longum_animalis_YL2" = "B. longum YL2",
+                          "Blautia_coccoides_YL58" = "B. coccoides YL58",
+                          "Clostridium_clostridioforme_YL32" = "C. clostridioforme YL32",
+                          "Clostridium_innocuum_I46" = "C. innocuum I46",
+                          "Enterococcus_faecalis_KB1" = "E. faecalis KB1",
+                          "Flavonifractor_plautii_YL31" = "F. plautii YL31",
+                          "Lactobacillus_reuteri_I49" = "L. reuteri I49",
+                          "Muribaculum_intestinale_YL27" = "M. intestinale YL27",
+                          "Turicimonas_muris_YL45" = "T. muris YL45")) 
+
+jpeg(file = "/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/16S_pooled/figures/relabund_heatmap_3w_BC.jpeg", width = 950, height = 1600, units = "px", res = 300)   
+Fig <- ggplot(mean_abun, aes(x = colonization, y = Species, fill=mean_abun)) +
+  geom_tile(height=0.8, width=0.8) +
+  scale_y_discrete(limits=rev)+
+  theme_bw() +
+  ylab("Strain")+
+  scale_fill_gradient2(mid = "#e8eef3", high="#1b395b", limits=Heatmap_limits) +
+   theme(axis.ticks = element_blank(), 
+        axis.text.x=element_text(size=8, angle=0, vjust=1, hjust=0.5, color = "black"),
+        axis.text.y=element_text(size=8, 
+                                 color = "black", face = "italic", angle = 0),
+        panel.grid.major=element_blank(), 
+        legend.position = "right",
+        plot.margin = unit(c(0, 0, 0, 0), "cm"),
+        strip.text.x = element_text(size = 8, face = "bold"), 
+        legend.title=element_text(size=8, face = "bold"), 
+        legend.key.width=unit(1.15,"cm"),
+        legend.title.align = 0.5)
+Fig
+dev.off()
+
+## Calculate relative abundance stats for individual strains
+ps_YL44_3 <- ps_species %>% 
+  filter(age == "3") %>%
+  filter(colonization == "B" | colonization == "B+C") %>%
+  filter(experiment == "1") %>%
+  filter(Species == "Akkermansia_muciniphila_YL44")
+  
+shapiro.test(ps_YL44_3$Abundance)
+
+levene_test(Abundance ~ colonization, data = ps_YL44_3)
+
+wilcox.test(Abundance ~ colonization, data = ps_YL44_3)
