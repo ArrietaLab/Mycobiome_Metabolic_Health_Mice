@@ -1,6 +1,9 @@
 library(tidyverse)
 library(ggplot)
 
+# Load data file
+flow <- read.csv("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/flow_cytometry/HFHS_fungi_pooled_flow_heatmap.csv")
+
 # log10 transform mean cells/g tissue values 
 flow <- flow %>%
   mutate(log10_mean_cells_g = log10(mean_cells_g))
