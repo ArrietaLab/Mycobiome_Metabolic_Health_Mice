@@ -52,6 +52,9 @@ RangeNorm<-function(x){
   }
 }
 
+# Load data file
+data1<-read_csv(file = paste0(datadir, "Spearman_HFHS.csv")) 
+
 # Spearman correlation between all variables the correlation cutoff is set at abs(0.6).
 all_data<- data1  
 circos.par(start.degree = 172)
