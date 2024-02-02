@@ -7,6 +7,9 @@ library(ggrepel)
 
 set.seed(123456)
 
+# Load data file
+BC_PCA <- read.csv("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/B+C/BC_pca_scores.csv")
+
 # Plot PCA based on values calculated by Metaboanalyst
 BC_PCA$Diet <- factor(BC_PCA$Diet, levels = c("SD", "HFHS"))
 
@@ -47,6 +50,9 @@ BC_euclidean <- vegdist(BC_PCA_filt, method = "euclidean") # calculate Euclidean
 permanova <- adonis2(BC_euclidean ~ colonization + Diet, data = BC_PCA_mod, permutations = 999)
 
 # Fold change analysis 
+# Load data file with values calculated by Metaboanalyst
+BC_SD <- read.csv("/Users/mackenziegutierrez/Desktop/HFHS_fungi_pooled/metabolomics/B+C/volcano_stats_BC_SD.csv")
+
 # Create new categorical column
 BC_SD <- BC_SD %>%
   mutate(change = case_when(FC >= 2 & p.ajusted <= 0.05 ~ "up",
