@@ -73,7 +73,7 @@ microbes<-apply(abund_ranks,2,RangeNorm)
 
 data_matrix<-as.matrix(cbind(metabolism,microbes,wat,colonization_table))
 
-# Perform Pearson correlation analysis
+# Perform Spearman correlation analysis
 result <- rcorr(data_matrix, type = cor_method)
 
 # Access the matrix of correlations
